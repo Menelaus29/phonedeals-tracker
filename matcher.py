@@ -239,6 +239,9 @@ def matches_watchlist_item(
     # 2. Price gate
     if listing_price >= watchlist_item["threshold"]:
         return False, 0.0
+        
+    if listing_price < watchlist_item.get("min_price", 0):
+        return False, 0.0
 
     pct_below = (watchlist_item["threshold"] - listing_price) / watchlist_item["threshold"] * 100
 

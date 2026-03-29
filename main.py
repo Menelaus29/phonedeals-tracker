@@ -171,7 +171,7 @@ def run_facebook_crawl() -> None:
             # Open visible browser for manual login
             log.info(
                 "🔐 First run: browser will open so you can log in to Facebook.\n"
-                "   Close the browser window (or press Enter here) once logged in."
+                "   Please log in. The tracker will automatically continue once done."
             )
             ctx = pw.chromium.launch_persistent_context(
                 str(browser_data),
@@ -181,7 +181,15 @@ def run_facebook_crawl() -> None:
             )
             page = ctx.new_page()
             page.goto("https://www.facebook.com/login")
-            input("\n👉 Log in to Facebook in the browser window, then press Enter here to continue...\n")
+            
+            log.info("\n👉 Please log in to Facebook. Waiting up to 5 minutes...\n")
+            try:
+                # Wait for the Marketplace icon in the sidebar which proves we are logged in
+                page.wait_for_selector("a[href*='/marketplace']", timeout=300000)
+                log.info("✅ Login detected! Continuing...")
+                page.wait_for_timeout(3000)
+            except Exception as exc:
+                log.warning("Login wait timed out or browser closed. Continuing... (%s)", exc)
         else:
             ctx = pw.chromium.launch_persistent_context(
                 str(browser_data),

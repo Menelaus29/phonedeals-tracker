@@ -23,15 +23,19 @@ watchlist:
   - model: vivo S30 Pro Mini
     condition: any
     threshold: 9000000
+    min_price: 4000000
 
   - model: Oppo Find X8
     condition: any
     threshold: 9300000
+    min_price: 4000000
 
   - model: vivo X200 Pro Mini
     condition: any
     threshold: 9500000
+    min_price: 4000000
 
   - model: Honor 400 Pro
     condition: any
-    threshold: 9300000
+    threshold: 9500000
+    min_price: 4000000

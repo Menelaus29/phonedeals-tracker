@@ -46,19 +46,19 @@ def send_deal_alert(
     price_str = f"{price:,}₫".replace(",", ".")
 
     text = (
-        f"🔥 *Deal Found!*\n"
-        f"📱 *{_escape(matched_model)}* — {_escape(condition_label)}\n"
-        f"💰 *{price_str}*  \\(_{pct_below:.1f}%_ below threshold\\)\n"
+        f"🔥 <b>Deal Found!</b>\n"
+        f"📱 <b>{_escape(matched_model)}</b> — {_escape(condition_label)}\n"
+        f"💰 <b>{_escape(price_str)}</b>  (<i>{pct_below:.1f}%</i> below threshold)\n"
         f"🏪 Source: {_escape(source.title())}\n"
         f"📍 {_escape(location)}\n"
-        f"📝 _{_escape(title)}_\n"
+        f"📝 <i>{_escape(title)}</i>\n"
         f"🔗 {url}"
     )
 
     payload = {
         "chat_id": chat_id,
         "text": text,
-        "parse_mode": "MarkdownV2",
+        "parse_mode": "HTML",
         "disable_web_page_preview": False,
     }
 
@@ -80,8 +80,8 @@ def send_startup_ping(*, bot_token: str, chat_id: str) -> None:
     """Sends a simple ping when the bot starts so you know it's alive."""
     payload = {
         "chat_id": chat_id,
-        "text": "✅ Phone Deal Tracker started\\. Monitoring listings\\.\\.\\.",
-        "parse_mode": "MarkdownV2",
+        "text": "✅ Phone Deal Tracker started. Monitoring listings...",
+        "parse_mode": "HTML",
     }
     try:
         requests.post(
@@ -95,6 +95,7 @@ def send_startup_ping(*, bot_token: str, chat_id: str) -> None:
 
 
 def _escape(text: str) -> str:
-    """Escape special characters for Telegram MarkdownV2."""
-    special = r"_*[]()~`>#+-=|{}.!"
-    return "".join(f"\\{c}" if c in special else c for c in str(text))
+    """Escape special characters for Telegram HTML parse mode.
+    Only <, >, & need escaping — much more robust than MarkdownV2.
+    """
+    return str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")

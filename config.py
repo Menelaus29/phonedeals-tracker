@@ -78,6 +78,7 @@ def load_watchlist() -> dict:
                 f"'condition' must be 'new', 'used', or 'any'. Got: {item['condition']}"
             )
         item["threshold"] = int(item["threshold"])
+        item["min_price"] = int(item.get("min_price", 0))
 
     data["items"] = items
     return data

@@ -45,7 +45,10 @@ FB_CITY_CODES: dict[str, str] = {
 FB_MARKETPLACE_BASE = "https://www.facebook.com/marketplace"
 MAX_SCROLL_ROUNDS = 5   # How many times to scroll down + wait for more results
 SCROLL_PAUSE = 2.5      # Seconds between scrolls
-
+# URL fragments that indicate we've been redirected away from the target page
+_LOGIN_URL_FRAGMENTS = ("/login", "/checkpoint", "/recover")
+# A selector that only exists when logged in (the Marketplace icon in the nav)
+_LOGGED_IN_SELECTOR = "a[href*='/marketplace']"
 
 class FacebookCrawler(BaseCrawler):
     """
@@ -56,6 +59,10 @@ class FacebookCrawler(BaseCrawler):
     SOURCE = "facebook"
 
     def crawl(self) -> Generator[Listing, None, None]:
+        # bail out early if session is dead
+        if not self._check_auth():
+            log.error("[Facebook] Aborting crawl — session invalid.")
+            return
         city_code = FB_CITY_CODES.get(self.location, "")
 
         for item in self.watchlist.get("items", []):
@@ -91,6 +98,13 @@ class FacebookCrawler(BaseCrawler):
         if not self.safe_goto(url, wait_until="domcontentloaded"):
             return
 
+        # ── Mid-crawl session drop check ──────────────────────────────────────
+        current_url = self.page.url
+        if any(frag in current_url for frag in _LOGIN_URL_FRAGMENTS):
+            log.warning("[Facebook] Redirected to login mid-crawl — session dropped.")
+            self._send_session_alert(reason="session_expired")
+            return
+
         # Give React a moment to render
         time.sleep(3)
         self._dismiss_login_popup()
@@ -111,6 +125,81 @@ class FacebookCrawler(BaseCrawler):
             # Scroll down
             self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
             time.sleep(SCROLL_PAUSE)
+
+    def _check_auth(self) -> bool:
+        """
+        Navigate to Facebook home and verify the session is still alive.
+        Returns True if authenticated, False if session has expired or CAPTCHA hit.
+        Fires a Telegram alert if auth is lost.
+        """
+        import notifier
+        import config
+
+        log.info("[Facebook] Checking session validity...")
+        try:
+            self.page.goto("https://www.facebook.com", wait_until="domcontentloaded", timeout=20_000)
+        except PWTimeout:
+            log.error("[Facebook] Timed out loading Facebook home — network issue?")
+            return True  # Don't treat a network blip as a session expiry
+
+        current_url = self.page.url
+
+        # Redirected to login or checkpoint
+        if any(frag in current_url for frag in _LOGIN_URL_FRAGMENTS):
+            log.warning("[Facebook] Session expired — redirected to %s", current_url)
+            self._send_session_alert(reason="session_expired")
+            return False
+
+        # Still on facebook.com but Marketplace link missing — CAPTCHA or restricted
+        try:
+            self.page.wait_for_selector(_LOGGED_IN_SELECTOR, timeout=5_000)
+        except PWTimeout:
+            log.warning("[Facebook] Logged-in UI not found — possible CAPTCHA or account restriction.")
+            self._send_session_alert(reason="captcha")
+            return False
+
+        log.info("[Facebook] Session OK.")
+        return True
+
+
+    def _send_session_alert(self, reason: str) -> None:
+        """Send a Telegram alert telling the user to re-authenticate."""
+        import notifier
+        import config
+
+        if reason == "captcha":
+            message = (
+                "⚠️ *Facebook CAPTCHA detected\\.* \n\n"
+                "The crawler cannot continue\\. To fix:\n"
+                "1\\. Set `HEADLESS=false` in your `.env`\n"
+                "2\\. Restart `python main\\.py`\n"
+                "3\\. Solve the CAPTCHA in the browser window\n"
+                "4\\. Set `HEADLESS=true` again"
+            )
+        else:
+            message = (
+                "⚠️ *Facebook session expired\\.* \n\n"
+                "The crawler cannot continue\\. To fix:\n"
+                "1\\. Delete the `browser\\_data` folder\n"
+                "2\\. Restart `python main\\.py`\n"
+                "3\\. Log in manually in the browser window that opens"
+            )
+
+        try:
+            import requests
+            resp = requests.post(
+                f"https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}/sendMessage",
+                json={
+                    "chat_id": config.TELEGRAM_CHAT_ID,
+                    "text": message,
+                    "parse_mode": "MarkdownV2",
+                },
+                timeout=15,
+            )
+            resp.raise_for_status()
+            log.info("[Facebook] Session alert sent to Telegram.")
+        except Exception as exc:
+            log.error("[Facebook] Failed to send session alert: %s", exc)
 
     def _dismiss_login_popup(self) -> None:
         """Close Facebook's 'log in to continue' modal if it appears."""

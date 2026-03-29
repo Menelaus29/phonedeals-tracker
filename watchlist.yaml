@@ -1,0 +1,37 @@
+# ─────────────────────────────────────────────
+# Location
+# ─────────────────────────────────────────────
+# Your preferred search location.
+# Supported aliases:
+#   Hanoi:          HN, hn, ha noi, hanoi
+#   Ho Chi Minh:    HCM, SG, tphcm, sai gon, ho chi minh
+#   Da Nang:        DN, da nang, danang
+location: HN
+
+# ─────────────────────────────────────────────
+# Watchlist (max 5 models)
+# ─────────────────────────────────────────────
+# Fields:
+#   model:     The phone model to search for (required).
+#   condition: "new", "used", or "any" (required).
+#   threshold: Maximum acceptable price in VND (required).
+#
+# IMPORTANT: Be specific with model names to avoid false positives.
+#   - "iPhone 15 Pro" will NOT match "iPhone 15 Pro Max"
+#   - "Galaxy S24" will NOT match "Galaxy S24+"
+watchlist:
+  - model: vivo S30 Pro Mini
+    condition: any
+    threshold: 9000000
+
+  - model: Oppo Find X8
+    condition: any
+    threshold: 9300000
+
+  - model: vivo X200 Pro Mini
+    condition: any
+    threshold: 9500000
+
+  - model: Honor 400 Pro
+    condition: any
+    threshold: 9300000

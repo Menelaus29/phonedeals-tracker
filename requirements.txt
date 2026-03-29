@@ -1,0 +1,7 @@
+playwright>=1.48.0
+playwright-stealth
+rapidfuzz
+APScheduler
+python-dotenv
+PyYAML
+requests

@@ -4,7 +4,7 @@
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 [![Self-Hosted](https://img.shields.io/badge/Self--Hosted-yes-orange)]()
 
-A self-hosted, single-user phone deal tracker for Vietnam. Monitors **Chotot**, **Shopee**, **Tiki**, **Lazada**, and **Facebook Marketplace/Groups** for phone listings matching your watchlist, and sends Telegram alerts when a deal is found. At the moment, the location filtering and listing day ages filtering features are NOt working. The fuzzy matching threshold also probably needs them working. I'll fix them when I have the time lolol. Please open an issue if you find a bug or have a feature request. Contributions are of course greatly appreciated.
+A self-hosted, single-user phone deal tracker for Vietnam. Monitors **Chotot**, **Shopee**, **Tiki**, **Lazada**, and **Facebook Marketplace/Groups** for phone listings matching your watchlist, and sends Telegram alerts when a deal is found. At the moment, the location filtering and listing day ages filtering features are NOT working. The fuzzy matching threshold also probably needs some tinkering. I'll fix them when I have the time lolol. Please open an issue if you find a bug or have a feature request. Contributions are of course greatly appreciated.
 ---
 
 ## Features

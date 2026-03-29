@@ -223,6 +223,26 @@ def main() -> None:
     # Purge old non-deals
     db.purge_old_non_deals(days=7)
 
+    # ── Retry any deals whose Telegram alert previously failed ──────────────
+    unsent = db.get_unsent_deals()
+    if unsent:
+        log.info("Retrying %d unsent deal alert(s) from previous runs...", len(unsent))
+        for row in unsent:
+            sent = notifier.send_deal_alert(
+                title=row["title"],
+                price=row["price"],
+                pct_below=row["pct_below"],
+                condition=row["condition"],
+                source=row["source"],
+                location=row["location"] or "",
+                url=row["url"],
+                matched_model=row["matched_model"],
+                bot_token=config.TELEGRAM_BOT_TOKEN,
+                chat_id=config.TELEGRAM_CHAT_ID,
+            )
+            if sent:
+                db.mark_alerted(row["url"])
+
     # Send startup ping
     notifier.send_startup_ping(
         bot_token=config.TELEGRAM_BOT_TOKEN,

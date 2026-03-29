@@ -220,6 +220,9 @@ def main() -> None:
     # Boot database
     db.init_db()
 
+    # Purge old non-deals
+    db.purge_old_non_deals(days=7)
+
     # Send startup ping
     notifier.send_startup_ping(
         bot_token=config.TELEGRAM_BOT_TOKEN,

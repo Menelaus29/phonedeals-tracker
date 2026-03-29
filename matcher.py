@@ -17,6 +17,7 @@ Key design decisions:
 import re
 import logging
 from typing import Optional
+from config import FUZZY_THRESHOLD
 
 from rapidfuzz import fuzz
 
@@ -228,7 +229,6 @@ def matches_watchlist_item(
       3. Fuzzy similarity is >= FUZZY_THRESHOLD.
       4. All model keywords from the watchlist are found exactly in the listing title.
     """
-    from config import FUZZY_THRESHOLD
 
     # 1. Condition gate
     required_condition = watchlist_item.get("condition", "any")

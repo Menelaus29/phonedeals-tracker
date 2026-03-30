@@ -17,6 +17,9 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 import types
 _fake_config = types.ModuleType("config")
 _fake_config.FUZZY_THRESHOLD = 85
+_fake_config.MAX_AGE_DAYS = 15
+_fake_config.FB_GROUP_URLS = []
+_fake_config.FB_PAGE_URLS = []
 sys.modules["config"] = _fake_config
 
 import pytest

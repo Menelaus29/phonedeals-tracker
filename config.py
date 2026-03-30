@@ -30,6 +30,9 @@ MAX_AGE_DAYS: int = int(os.getenv("MAX_AGE_DAYS", "15"))
 _fb_raw = os.getenv("FB_GROUP_URLS", "")
 FB_GROUP_URLS: list[str] = [u.strip() for u in _fb_raw.split(",") if u.strip()]
 
+_fb_pages_raw = os.getenv("FB_PAGE_URLS", "")
+FB_PAGE_URLS: list[str] = [u.strip() for u in _fb_pages_raw.split(",") if u.strip()]
+
 
 def load_watchlist() -> dict:
     """

@@ -1,8 +1,10 @@
 """
 crawlers/facebook.py
 ────────────────────
-Scrapes Facebook Marketplace (filtered by location) and user-defined
-Facebook Group URLs.
+Scrapes:
+  1. Facebook Marketplace (filtered by location)
+  2. Facebook Group post search results + comments inside those posts
+  3. Public Facebook Page / Shop feeds
 
 Authentication:
   - Uses a persistent Playwright browser context stored in BROWSER_DATA_DIR.
@@ -14,8 +16,11 @@ Authentication:
 Facebook Marketplace URL pattern (Vietnam, by location):
   https://www.facebook.com/marketplace/<city_code>/search?query=<q>
 
-Facebook Groups URL pattern:
+Facebook Groups URL pattern (posts + comments):
   <group_url>/search/?q=<query>
+
+Facebook Page/Shop URL pattern:
+  <page_url>  (scrolled feed, posts parsed for price)
 """
 
 from __future__ import annotations
@@ -30,6 +35,7 @@ from urllib.parse import quote_plus
 from playwright.sync_api import TimeoutError as PWTimeout, Page
 
 from .base_crawler import BaseCrawler, Listing
+import config
 
 log = logging.getLogger(__name__)
 
@@ -43,7 +49,9 @@ FB_CITY_CODES: dict[str, str] = {
 }
 
 FB_MARKETPLACE_BASE = "https://www.facebook.com/marketplace"
-MAX_SCROLL_ROUNDS = 5   # How many times to scroll down + wait for more results
+MAX_SCROLL_ROUNDS = 5        # How many times to scroll down + wait for more results
+MAX_COMMENT_POSTS = 8        # Max posts to open and scrape comments from per group search
+MAX_COMMENTS_PER_POST = 20   # Max comments to parse per post
 SCROLL_PAUSE = 2.5      # Seconds between scrolls
 # URL fragments that indicate we've been redirected away from the target page
 _LOGIN_URL_FRAGMENTS = ("/login", "/checkpoint", "/recover")
@@ -84,13 +92,16 @@ class FacebookCrawler(BaseCrawler):
             log.info("[Facebook] Marketplace search: '%s' in %s", query, self.location or "all")
             yield from self._scrape_marketplace_or_group(mp_url, is_group=False)
 
-            # ── Facebook Groups ───────────────────────────────────────────────
-            from config import FB_GROUP_URLS
-
-            for group_url in FB_GROUP_URLS:
+            # ── Facebook Groups (posts + comments) ────────────────────────────
+            for group_url in config.FB_GROUP_URLS:
                 search_url = f"{group_url.rstrip('/')}/search/?q={quote_plus(query)}"
                 log.info("[Facebook] Group search: '%s' at %s", query, group_url)
                 yield from self._scrape_marketplace_or_group(search_url, is_group=True)
+
+            # ── Facebook Pages / Shops ────────────────────────────────────────
+            for page_url in config.FB_PAGE_URLS:
+                log.info("[Facebook] Page/Shop feed: '%s' at %s", query, page_url)
+                yield from self._scrape_page_posts(page_url, query)
 
             time.sleep(3)
 
@@ -110,6 +121,7 @@ class FacebookCrawler(BaseCrawler):
         self._dismiss_login_popup()
 
         seen_urls: set[str] = set()
+        comment_post_urls: list[str] = []  # collect post URLs to dive into for comments
 
         for _ in range(MAX_SCROLL_ROUNDS):
             if is_group:
@@ -121,10 +133,23 @@ class FacebookCrawler(BaseCrawler):
                 if listing.url not in seen_urls:
                     seen_urls.add(listing.url)
                     yield listing
+                    # Queue posts for comment scraping
+                    if is_group and listing.url not in comment_post_urls:
+                        comment_post_urls.append(listing.url)
 
             # Scroll down
             self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
             time.sleep(SCROLL_PAUSE)
+
+        # ── Dive into posts to scrape comments ───────────────────────────────
+        if is_group:
+            for post_url in comment_post_urls[:MAX_COMMENT_POSTS]:
+                if post_url in seen_urls:
+                    # We already have the post itself; now get comments too
+                    for listing in self._extract_post_comments(post_url):
+                        if listing.url not in seen_urls:
+                            seen_urls.add(listing.url)
+                            yield listing
 
     def _check_auth(self) -> bool:
         """
@@ -133,7 +158,6 @@ class FacebookCrawler(BaseCrawler):
         Fires a Telegram alert if auth is lost.
         """
         import notifier
-        import config
 
         log.info("[Facebook] Checking session validity...")
         try:
@@ -165,7 +189,6 @@ class FacebookCrawler(BaseCrawler):
     def _send_session_alert(self, reason: str) -> None:
         """Send a Telegram alert telling the user to re-authenticate."""
         import notifier
-        import config
 
         if reason == "captcha":
             message = (
@@ -287,6 +310,186 @@ class FacebookCrawler(BaseCrawler):
             log.debug("[Facebook] Group post extraction error: %s", exc)
         return results
 
+    def _extract_post_comments(self, post_url: str) -> list[Listing]:
+        """
+        Navigate to a group post URL and extract top-level comments that
+        contain a price.  Each comment generates a Listing whose URL is the
+        post URL with a synthetic '#comment-<index>' fragment so it is
+        deduplicated correctly.
+        """
+        results = []
+        try:
+            if not self.safe_goto(post_url, wait_until="domcontentloaded"):
+                return results
+
+            current_url = self.page.url
+            if any(frag in current_url for frag in _LOGIN_URL_FRAGMENTS):
+                return results
+
+            time.sleep(3)
+            self._dismiss_login_popup()
+
+            # Expand comments if a "View more comments" button is present
+            for _ in range(3):
+                try:
+                    more_btn = self.page.query_selector(
+                        "div[role='button'][tabindex='0']:has-text('View more comments'), "
+                        "div[role='button'][tabindex='0']:has-text('Xem thêm bình luận')"
+                    )
+                    if more_btn:
+                        more_btn.click()
+                        time.sleep(1.5)
+                    else:
+                        break
+                except Exception:
+                    break
+
+            # Each top-level comment is wrapped in a role='article' inside the
+            # comments section; fall back to ul[role='list'] > li structure.
+            comment_els = self.page.query_selector_all(
+                "ul[role='list'] > li div[dir='auto']"
+            )
+            if not comment_els:
+                comment_els = self.page.query_selector_all(
+                    "div[role='article'] div[dir='auto']"
+                )
+
+            seen_texts: set[str] = set()
+            idx = 0
+            for el in comment_els[:MAX_COMMENTS_PER_POST * 3]:  # allow some duds
+                listing = self._parse_comment(el, post_url, idx)
+                if listing:
+                    text_key = listing.title[:60]
+                    if text_key not in seen_texts:
+                        seen_texts.add(text_key)
+                        results.append(listing)
+                        idx += 1
+                        if idx >= MAX_COMMENTS_PER_POST:
+                            break
+        except Exception as exc:  # noqa: BLE001
+            log.debug("[Facebook] Comment extraction error for %s: %s", post_url, exc)
+        return results
+
+    def _parse_comment(self, el, post_url: str, idx: int) -> Listing | None:
+        """Parse a single comment element into a Listing, or None if no price found."""
+        try:
+            text = el.inner_text().strip()
+            if not text or len(text) < 5:
+                return None
+
+            price = self._parse_price_from_text(text)
+            if price == 0:
+                return None
+
+            title = text[:200].replace("\n", " ").strip()
+            condition = self._infer_condition(text)
+            # Unique URL per comment so DB deduplication works
+            comment_url = f"{post_url}#comment-{idx}"
+
+            return Listing(
+                url=comment_url,
+                source="facebook",
+                title=f"[Comment] {title}",
+                price=price,
+                condition=condition,
+                location=self.location,
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.debug("[Facebook] Comment parse error: %s", exc)
+            return None
+
+    # ── Page / Shop feed extraction ────────────────────────────────────────────
+
+    def _scrape_page_posts(self, page_url: str, query: str) -> Generator[Listing, None, None]:
+        """
+        Scrape posts from a public Facebook Page/Shop.
+        Posts are scrolled through and only those matching the query keywords
+        and containing a price are yielded.
+        """
+        if not self.safe_goto(page_url.rstrip("/"), wait_until="domcontentloaded"):
+            return
+
+        current_url = self.page.url
+        if any(frag in current_url for frag in _LOGIN_URL_FRAGMENTS):
+            log.warning("[Facebook] Redirected to login accessing page %s", page_url)
+            return
+
+        time.sleep(3)
+        self._dismiss_login_popup()
+
+        seen_urls: set[str] = set()
+        # Keywords from the query to filter relevant posts
+        kw_tokens = [w.lower() for w in query.split() if len(w) > 2]
+
+        for _ in range(MAX_SCROLL_ROUNDS):
+            articles = self.page.query_selector_all("div[role='article']")
+            for article in articles:
+                listing = self._parse_page_post(article, page_url, kw_tokens)
+                if listing and listing.url not in seen_urls:
+                    seen_urls.add(listing.url)
+                    yield listing
+
+            self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            time.sleep(SCROLL_PAUSE)
+
+    def _parse_page_post(self, article, page_url: str, kw_tokens: list[str]) -> Listing | None:
+        """Parse a single post article element from a Page/Shop feed."""
+        try:
+            # Try to find a link to the specific post
+            link_el = (
+                article.query_selector("a[href*='/posts/']")
+                or article.query_selector("a[href*='/permalink/']")
+                or article.query_selector("a[href*='story_fbid']")
+            )
+            href = link_el.get_attribute("href") if link_el else ""
+            if href:
+                url = href.split("?")[0]
+                if url.startswith("/"):
+                    url = "https://www.facebook.com" + url
+            else:
+                # Fall back to page URL with a fingerprint from content
+                content_hash = abs(hash(article.inner_text()[:100])) % 10_000_000
+                url = f"{page_url.rstrip('/')}#post-{content_hash}"
+
+            # Get text content
+            content_el = (
+                article.query_selector("div[data-ad-comet-preview='message']")
+                or article.query_selector("div[dir='auto']")
+            )
+            if not content_el:
+                return None
+
+            text = content_el.inner_text().strip()
+            if not text:
+                return None
+
+            # Filter: must contain at least one query keyword
+            text_lower = text.lower()
+            if kw_tokens and not any(kw in text_lower for kw in kw_tokens):
+                return None
+
+            price = self._parse_price_from_text(text)
+            if price == 0:
+                return None
+
+            if not self._is_recent_enough(text):
+                return None
+
+            title = text[:200].replace("\n", " ").strip()
+            condition = self._infer_condition(text)
+
+            return Listing(
+                url=url,
+                source="facebook",
+                title=title,
+                price=price,
+                condition=condition,
+                location=self.location,
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.debug("[Facebook] Page post parse error: %s", exc)
+            return None
+
     def _parse_group_post(self, post) -> Listing | None:
         try:
             # Get link to the post
@@ -402,7 +605,6 @@ class FacebookCrawler(BaseCrawler):
         Returns False if the date text indicates the post is older than MAX_AGE_DAYS.
         """
         import datetime
-        from config import MAX_AGE_DAYS
 
         text = date_text.lower().strip()
         if not text:
@@ -415,7 +617,7 @@ class FacebookCrawler(BaseCrawler):
         w_match = re.search(r"(\d+)\s*(?:w|week|tuần)", text)
         if w_match:
             weeks = int(w_match.group(1))
-            if weeks * 7 > MAX_AGE_DAYS:
+            if weeks * 7 > config.MAX_AGE_DAYS:
                 return False
             return True
 
@@ -423,7 +625,7 @@ class FacebookCrawler(BaseCrawler):
         d_match = re.search(r"(\d+)\s*(?:d|day|ngày)", text)
         if d_match:
             days = int(d_match.group(1))
-            if days > MAX_AGE_DAYS:
+            if days > config.MAX_AGE_DAYS:
                 return False
             return True
 

@@ -1,6 +1,6 @@
 import subprocess, sys
 r = subprocess.run(
-    [sys.executable, "-m", "pytest", "tests/test_matcher.py", "--tb=short", "-v"],
+    [sys.executable, "-m", "pytest", "tests/", "--tb=short", "-v"],
     capture_output=True, text=True
 )
 output = r.stdout + r.stderr

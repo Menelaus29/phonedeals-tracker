@@ -180,6 +180,7 @@ def run_facebook_crawl() -> None:
                 timezone_id="Asia/Ho_Chi_Minh",
             )
             page = ctx.new_page()
+            Stealth().apply_stealth_sync(page)
             page.goto("https://www.facebook.com/login")
             
             log.info("\n👉 Please log in to Facebook. Waiting up to 5 minutes...\n")
